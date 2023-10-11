@@ -2,6 +2,10 @@
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
+#include "./libs/util.h"
+
+#define RXp2 16
+#define TXp2 17
 
 // Pin definitions for ESP32
 #define SCLK 22
@@ -18,10 +22,27 @@
 
 #define pIgnicao 21
 #define pMotor 19
+#define pAux 18
 #define pBt1 32
 #define pBt2 26
 #define pBtTrava 35
 #define pBtDestrava 34
+
+#define getALL 86
+#define setReleH 82
+#define setReleL 114
+#define setCCH 67
+#define setCCL 99
+#define setIgnicaoH 73
+#define setIgnicaoL 105
+#define setMotorH 77
+#define setMotorL 109
+#define setGasH 71
+#define setGasL 103
+#define setAguaH 65
+#define setAguaL 97
+#define setPositH 80
+#define setPositL 112
 
 int stRele200a = LOW;
 int stReleCC = LOW;
@@ -42,47 +63,30 @@ int btDesmili = 0;
 
 int loopLed = 0;
 int loopBtn = 0;
+int loopSetSerial = 0;
 
 int screen = -1;
 
 Adafruit_ST7735 tft = Adafruit_ST7735(CS, DC, MOSI, SCLK, RST);
 
 void setup() {
-  Serial.begin(115200);
+  Serial2.begin(9600, SERIAL_8N1, RXp2, TXp2);
 
   pinMode(pBt1, INPUT);
   pinMode(pBt2, INPUT);
+  pinMode(pBtTrava, INPUT);
+  pinMode(pBtDestrava, INPUT);
+  pinMode(pIgnicao, INPUT);
+  pinMode(pMotor, INPUT);
+  pinMode(pAux, INPUT);
 
   tft.initR(INITR_MINI160x80_PLUGIN);
   tft.setRotation(1);
   tft.fillScreen(ST7735_BLACK);
   tft.setCursor(25,40);
-  tft.setTextColor(ST7735_WHITE);
+  tft.setTextColor(ST7735_ORANGE);
   tft.setTextSize(2);
   tft.println("El Patron");
-}
-
-int pressBotao(int bt, int *lastStatus, int *btmilis) {
-  int status = digitalRead(bt);
-
-  if (status != *lastStatus) {
-    *lastStatus = status;
-  
-    if (status == HIGH) {
-      return millis() - *btmilis;
-    }
-
-    *btmilis = millis();
-  }
-
-  return 0;
-}
-
-void leds() {
-  // digitalWrite(pTanqueA, stTanqueA);
-  // digitalWrite(pTanqueB, stTanqueB);
-  // digitalWrite(pRele200a, stRele200a);
-  // digitalWrite(pReleCC, stReleCC);
 }
 
 void tela(int newScreen) {
@@ -172,12 +176,12 @@ void tela(int newScreen) {
   } else if (screen == TELA_TRAVA) {
     tft.fillScreen(ST7735_BLACK);
     tft.setTextColor(ST77XX_RED);
-    tft.setCursor(40,20);
+    tft.setCursor(55, 35);
     tft.println("TRAVA");
   } else if (screen == TELA_DESTRAVA) {
     tft.fillScreen(ST7735_BLACK);
     tft.setTextColor(ST77XX_GREEN);
-    tft.setCursor(20,20);
+    tft.setCursor(30, 35);
     tft.println("DESTRAVA");
   }
 
@@ -204,6 +208,8 @@ void botoes(int bt1, int bt2, int btTrava, int btDestrava) {
         stRele200a = HIGH;
       }
 
+      Serial2.write(stRele200a ? setReleH : setReleL);
+
       tela(TELA_RELE_200A);
     } else if (screen == TELA_CC) {
       if (bt2 > 2000 && stReleCC == LOW) {
@@ -212,19 +218,19 @@ void botoes(int bt1, int bt2, int btTrava, int btDestrava) {
         stReleCC = LOW;
       }
 
+      Serial2.write(stReleCC ? setCCH : setCCL);
+
       tela(TELA_CC);
     } else {
       tela(screen - 1);
     }
   } else if (btTrava > 0) {
-    Serial.println("Botao travar");
     int lastScreen = screen;
 
     tela(TELA_TRAVA);
     delay(2000);
     tela(lastScreen);
   } else if (btDestrava > 0) {
-    Serial.println("Botao destravar");
     int lastScreen = screen;
 
     tela(TELA_DESTRAVA);
@@ -233,17 +239,66 @@ void botoes(int bt1, int bt2, int btTrava, int btDestrava) {
   }
 }
 
-bool atualizaRele(int pin, int *status) {
-  int newStatus = digitalRead(pin);
+void processarSerial() {
+  while (Serial2.available() > 0) {
+    int serialByte = Serial2.read();
+    bool mudou = false;
 
-  if (newStatus != *status) {
-    *status = newStatus;
+    switch (serialByte) {
+      case setReleH:
+        if (!stRele200a) { mudou = true; }
+        stRele200a = HIGH;
+        break;
 
-    return true;
+      case setReleL:
+        if (stRele200a) { mudou = true; }
+        stRele200a = LOW;
+        break;
+
+      case setCCH:
+        if (!stReleCC) { mudou = true; }
+        stReleCC = HIGH;
+        break;
+
+      case setCCL:
+        if (stReleCC) { mudou = true; }
+        stReleCC = LOW;
+        break;
+
+      case setGasH:
+        if (!stGas) { mudou = true; }
+        stGas = HIGH;
+        break;
+
+      case setGasL:
+        if (stGas) { mudou = true; }
+        stGas = LOW;
+        break;
+
+      case setAguaH:
+        if (!stAgua) { mudou = true; }
+        stAgua = HIGH;
+        break;
+
+      case setAguaL:
+        if (stAgua) { mudou = true; }
+        stAgua = LOW;
+        break;
+    }
+
+    if (mudou) {
+      tela(screen);
+    }
   }
 
-  return false;
-} 
+  if (millis() - loopSetSerial > 751) {
+    Serial2.write(stIgnicao ? setIgnicaoH : setIgnicaoL);
+    Serial2.write(stMotor ? setMotorH : setMotorL);
+    Serial2.write(getALL);
+
+    loopSetSerial = millis();
+  }
+}
 
 void loop() {
   int tempoBt1 = 0;
@@ -252,14 +307,14 @@ void loop() {
   int tempoBtDestrava = 0;
 
   if (millis() - loopBtn > 50) {
-    tempoBt1 = pressBotao(pBt1, &bt1last, &bt1mili);
-    tempoBt2 = pressBotao(pBt2, &bt2last, &bt2mili);
-    tempoBtTrava = pressBotao(pBtTrava, &btTravlast, &btTravmili);
-    tempoBtDestrava = pressBotao(pBtDestrava, &btDeslast, &btDesmili);
+    tempoBt1 = pressBotao(pBt1, HIGH, &bt1last, &bt1mili);
+    tempoBt2 = pressBotao(pBt2, HIGH, &bt2last, &bt2mili);
+    tempoBtTrava = pressBotao(pBtTrava, HIGH, &btTravlast, &btTravmili);
+    tempoBtDestrava = pressBotao(pBtDestrava, HIGH, &btDeslast, &btDesmili);
 
     loopBtn = millis();
   }
 
   botoes(tempoBt1, tempoBt2, tempoBtTrava, tempoBtDestrava);
-  leds();
+  processarSerial();
 }
